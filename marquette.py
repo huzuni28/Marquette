@@ -50,13 +50,13 @@ def make_red_trash_icon(size: int = 16) -> QIcon:
     return QIcon(pm)
 
 
-def make_text_tool_icon(size: int = 18) -> QIcon:
+def make_text_tool_icon(size: int = 18, color: QColor = QColor(30, 30, 30)) -> QIcon:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
 
-    pen = QPen(QColor(30, 30, 30))
+    pen = QPen(color)
     pen.setWidth(2)
     p.setPen(pen)
 
@@ -141,13 +141,6 @@ class ResizeHandle(QLabel):
 
 
 class TextBoxWidget(QWidget):
-    """
-    Persistent text box overlay:
-    - resizable via bottom-right handle
-    - movable by dragging the BORDER area (not inside text)
-    - right-click delete with red trash icon
-    - auto-delete if empty on editingFinished
-    """
     MIN_W = 60
     MIN_H = 28
     BORDER_GRAB_PX = 7
@@ -183,12 +176,10 @@ class TextBoxWidget(QWidget):
 
         self.handle = ResizeHandle(self)
 
-        # resize state
         self._resizing = False
         self._resize_start_global = QPoint()
         self._start_geom = QRect()
 
-        # move state (border-drag)
         self._moving = False
         self._move_start_global = QPoint()
         self._start_pos = QPoint()
@@ -229,7 +220,6 @@ class TextBoxWidget(QWidget):
         if event.button() == Qt.LeftButton:
             self._on_selected(self)
 
-            # resizing if on handle
             if self.handle.geometry().contains(event.position().toPoint()):
                 self._resizing = True
                 self._resize_start_global = event.globalPosition().toPoint()
@@ -237,7 +227,6 @@ class TextBoxWidget(QWidget):
                 event.accept()
                 return
 
-            # moving if clicking on border area (not inside text)
             if self._is_on_border(event.position().toPoint()):
                 self._moving = True
                 self._move_start_global = event.globalPosition().toPoint()
@@ -272,7 +261,6 @@ class TextBoxWidget(QWidget):
 
             parent = self.parentWidget()
             if parent:
-                # clamp to page bounds
                 new_x = max(0, min(new_pos.x(), parent.width() - self.width()))
                 new_y = max(0, min(new_pos.y(), parent.height() - self.height()))
                 new_pos = QPoint(new_x, new_y)
@@ -290,14 +278,12 @@ class TextBoxWidget(QWidget):
                 self._commit_geom_change()
                 event.accept()
                 return
-
             if self._moving:
                 self._moving = False
                 self.unsetCursor()
                 self._commit_geom_change()
                 event.accept()
                 return
-
         super().mouseReleaseEvent(event)
 
     def _commit_geom_change(self):
@@ -350,8 +336,6 @@ class TextBoxWidget(QWidget):
             self._on_change_commit(self, before, after)
 
 
-# ---------- PageView (rendered image + overlays) ----------
-
 class PageView(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -370,7 +354,6 @@ class PageView(QLabel):
         self.selected: Optional[TextBoxWidget] = None
         self.undo = UndoStack()
 
-        # Text tool drag-create
         self.text_tool_enabled = False
         self._dragging = False
         self._drag_start = QPoint()
@@ -390,8 +373,6 @@ class PageView(QLabel):
     def set_font_settings(self, qfont: QFont, fontsize: int):
         self.current_qfont = QFont(qfont)
         self.current_fontsize = int(fontsize)
-
-        # apply to selected only
         if self.selected:
             before = self.selected.model
             after = BoxModel(
@@ -417,7 +398,6 @@ class PageView(QLabel):
         self.page_index = page_index
         self.zoom = zoom
         self.resize(qpix.size())
-
         for b in self.boxes:
             b.setVisible(b.model.page_index == self.page_index)
 
@@ -462,7 +442,6 @@ class PageView(QLabel):
         self.undo.push_and_do(Command(do, undo, "Delete Box"))
 
     def spawn_default_box_left_middle(self):
-        """Create a box at left-middle of the current page."""
         if self._image_w_px <= 0 or self._image_h_px <= 0:
             return
         x = 30
@@ -477,7 +456,6 @@ class PageView(QLabel):
         if treat_as_drag_rect:
             r = rect.normalized()
             if r.width() < 40 and r.height() < 20:
-                # treat as click
                 x = r.x()
                 y = r.y() - (self.default_click_h // 2)
                 y = max(0, min(y, self._image_h_px - self.default_click_h))
@@ -487,7 +465,6 @@ class PageView(QLabel):
                     return
                 r = QRect(x, y, w, self.default_click_h)
             else:
-                # clamp within page bounds
                 x0 = max(0, min(r.left(), self._image_w_px - 1))
                 y0 = max(0, min(r.top(), self._image_h_px - 1))
                 x1 = max(0, min(r.right(), self._image_w_px - 1))
@@ -537,12 +514,10 @@ class PageView(QLabel):
 
         self.undo.push_and_do(Command(do, undo, "Add Box"))
 
-    # drag-to-create (when tool enabled)
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return super().mousePressEvent(event)
 
-        # if click on existing box -> select
         child = self.childAt(event.position().toPoint())
         if child and isinstance(child.parentWidget(), TextBoxWidget):
             self.selected = child.parentWidget()
@@ -576,8 +551,6 @@ class PageView(QLabel):
         super().mouseReleaseEvent(event)
 
 
-# ---------- Ctrl+Wheel zoom event filter ----------
-
 class CtrlWheelZoomFilter(QObject):
     def __init__(self, on_zoom_delta: Callable[[int], None]):
         super().__init__()
@@ -586,31 +559,25 @@ class CtrlWheelZoomFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Wheel:
             if QApplication.keyboardModifiers() & Qt.ControlModifier:
-                # positive -> zoom in, negative -> zoom out
-                delta = event.angleDelta().y()
-                self._on_zoom_delta(delta)
+                self._on_zoom_delta(event.angleDelta().y())
                 return True
         return False
 
 
-# ---------- Main Window ----------
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Preview-like PDF (Thumbnails + Center + Boxes + Zoom Slider)")
+        self.setWindowTitle("Marquette Alpha")
 
         self._doc: Optional[fitz.Document] = None
         self._path: Optional[str] = None
         self._page_index = 0
 
-        # Thumbnails
         self.thumbs = QListWidget()
         self.thumbs.setIconSize(QSize(140, 180))
         self.thumbs.setMinimumWidth(190)
         self.thumbs.currentRowChanged.connect(self._on_thumb_selected)
 
-        # Page view (inside centered container)
         self.page_view = PageView()
         self.page_container = QWidget()
         lay = QVBoxLayout(self.page_container)
@@ -623,17 +590,15 @@ class MainWindow(QMainWindow):
         self.scroll.setWidgetResizable(True)
         self.scroll.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
 
-        splitter = QSplitter()
-        splitter.addWidget(self.thumbs)
-        splitter.addWidget(self.scroll)
-        splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(splitter)
+        self.splitter = QSplitter()
+        self.splitter.addWidget(self.thumbs)
+        self.splitter.addWidget(self.scroll)
+        self.splitter.setStretchFactor(1, 1)
+        self.setCentralWidget(self.splitter)
 
-        # Zoom state
         self._zoom = 2.0
-        self.fit_width = True  # starts in fit-width
+        self.fit_width = True
 
-        # Ctrl+wheel zoom
         self._ctrl_wheel_filter = CtrlWheelZoomFilter(self._on_ctrl_wheel_zoom)
         self.scroll.viewport().installEventFilter(self._ctrl_wheel_filter)
 
@@ -641,25 +606,34 @@ class MainWindow(QMainWindow):
         self._build_status_zoom_slider()
         self._build_actions()
 
+        self.thumbs_visible = True
+        self._apply_dynamic_icons()
+
         self.resize(1300, 850)
 
-    # --- UI ---
+    # --- Theme / icon coloring ---
+
+    def _is_dark_mode(self) -> bool:
+        bg = self.palette().window().color()
+        luminance = (0.2126 * bg.red() + 0.7152 * bg.green() + 0.0722 * bg.blue())
+        return luminance < 128
+
+    def _apply_dynamic_icons(self):
+        color = QColor(240, 240, 240) if self._is_dark_mode() else QColor(20, 20, 20)
+        self.text_tool_btn.setIcon(make_text_tool_icon(18, color=color))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.PaletteChange, QEvent.ApplicationPaletteChange):
+            # safe: no global event filter recursion
+            self._apply_dynamic_icons()
+
+    # --- Toolbar / Status ---
 
     def _build_toolbar(self):
         tb = QToolBar("Tools", self)
         tb.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, tb)
-
-        self.text_tool_btn = QToolButton(self)
-        self.text_tool_btn.setCheckable(True)
-        self.text_tool_btn.setChecked(False)
-        self.text_tool_btn.setIcon(make_text_tool_icon(18))
-        self.text_tool_btn.setToolTip("Text tool")
-        self.text_tool_btn.toggled.connect(self._on_text_tool_toggled)
-        self.text_tool_btn.clicked.connect(self._on_text_tool_clicked_spawn)
-        tb.addWidget(self.text_tool_btn)
-
-        tb.addSeparator()
 
         self.font_box = QFontComboBox(self)
         self.font_box.setCurrentFont(QFont("Arial"))
@@ -672,19 +646,39 @@ class MainWindow(QMainWindow):
         self.size_box.valueChanged.connect(self._on_size_change)
         tb.addWidget(self.size_box)
 
+        self.text_tool_btn = QToolButton(self)
+        self.text_tool_btn.setCheckable(True)
+        self.text_tool_btn.setChecked(False)
+        self.text_tool_btn.setToolTip("Text tool")
+        self.text_tool_btn.toggled.connect(self._on_text_tool_toggled)
+        self.text_tool_btn.clicked.connect(self._on_text_tool_clicked_spawn)
+        tb.addWidget(self.text_tool_btn)
+
+        tb.addSeparator()
+
+        self.toggle_thumbs_btn = QToolButton(self)
+        self.toggle_thumbs_btn.setCheckable(True)
+        self.toggle_thumbs_btn.setChecked(True)
+        self.toggle_thumbs_btn.setText("Pages")
+        self.toggle_thumbs_btn.setToolTip("Show/hide page previews")
+        self.toggle_thumbs_btn.toggled.connect(self.set_thumbnails_visible)
+        tb.addWidget(self.toggle_thumbs_btn)
+
     def _build_status_zoom_slider(self):
         self.statusBar().showMessage("Ready")
 
         self.zoom_slider = QSlider(Qt.Horizontal, self)
-        self.zoom_slider.setRange(25, 400)     # percent
-        self.zoom_slider.setValue(200)         # 200% default (matches zoom=2.0)
+        self.zoom_slider.setRange(25, 400)
+        self.zoom_slider.setValue(200)
         self.zoom_slider.setFixedWidth(220)
         self.zoom_slider.setToolTip("Zoom (%)")
         self.zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
 
-        # Bottom-right corner
+        self.zoom_percent_label = QLabel("200%", self)
+
         self.statusBar().addPermanentWidget(QLabel("Zoom:", self))
         self.statusBar().addPermanentWidget(self.zoom_slider)
+        self.statusBar().addPermanentWidget(self.zoom_percent_label)
 
     def _build_actions(self):
         open_act = QAction("Open…", self)
@@ -715,17 +709,31 @@ class MainWindow(QMainWindow):
         for a in (open_act, save_act, undo_act, redo_act):
             self.addAction(a)
 
-    # --- Text tool behavior ---
+    # --- Thumbnails show/hide ---
+
+    def set_thumbnails_visible(self, visible: bool):
+        self.thumbs_visible = visible
+        self.thumbs.setVisible(visible)
+
+        total = max(1, self.splitter.width())
+        if visible:
+            self.splitter.setSizes([220, total - 220])
+        else:
+            self.splitter.setSizes([0, total])
+
+    # --- Text tool ---
 
     def _on_text_tool_toggled(self, enabled: bool):
         self.page_view.set_text_tool(enabled)
 
     def _on_text_tool_clicked_spawn(self):
-        # Only spawn when the user "activates" (checked) the tool
         if self.text_tool_btn.isChecked():
             self.page_view.spawn_default_box_left_middle()
 
     # --- Zoom ---
+
+    def _update_zoom_percent_label(self):
+        self.zoom_percent_label.setText(f"{int(round(self._zoom * 100))}%")
 
     def _set_zoom(self, zoom: float, update_slider: bool = True):
         self.fit_width = False
@@ -734,6 +742,7 @@ class MainWindow(QMainWindow):
             self.zoom_slider.blockSignals(True)
             self.zoom_slider.setValue(int(round(self._zoom * 100)))
             self.zoom_slider.blockSignals(False)
+        self._update_zoom_percent_label()
         if self._doc:
             self.render_current_page()
 
@@ -741,8 +750,7 @@ class MainWindow(QMainWindow):
         self._set_zoom(value / 100.0, update_slider=False)
 
     def _on_ctrl_wheel_zoom(self, delta_y: int):
-        # delta_y is typically 120 per notch
-        step = 10  # percent per notch
+        step = 10
         if delta_y > 0:
             self.zoom_slider.setValue(min(self.zoom_slider.maximum(), self.zoom_slider.value() + step))
         else:
@@ -823,10 +831,11 @@ class MainWindow(QMainWindow):
         page = self._doc.load_page(self._page_index)
         if self.fit_width:
             self._zoom = self._compute_fit_width_zoom(page)
-            # sync slider to fit zoom (without disabling fit mode)
             self.zoom_slider.blockSignals(True)
             self.zoom_slider.setValue(int(round(self._zoom * 100)))
             self.zoom_slider.blockSignals(False)
+
+        self._update_zoom_percent_label()
 
         mat = fitz.Matrix(self._zoom, self._zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -837,7 +846,7 @@ class MainWindow(QMainWindow):
         if self.thumbs.currentRow() != self._page_index:
             self.thumbs.setCurrentRow(self._page_index)
 
-    # --- Save annotations into same PDF ---
+    # --- Save into same PDF (FreeText annotations) ---
 
     def _style_freetext_plain(self, annot, qfont: QFont, fontsize: int):
         try:
